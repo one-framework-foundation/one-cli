@@ -1,0 +1,15 @@
+{
+  "repository": "vendored source",
+  "path": "dropins.py",
+  "sha256": "d2f0d1db3c8150ca4370ca2f185c24afffcf0b1817fee39661c2709e645bf016",
+  "local_changes": [
+    "Unused and duplicate imports removed; comprehension names are descriptive.",
+    "An unknown cached presence verdict is typed explicitly.",
+    "Unbilled endpoints are classified by exact localhost and parsed private IP literals.",
+    "Docstrings describe the portable drop-in contract only.",
+    "A non-UTF-8 env file is treated as unreadable.",
+    "No built-in subscription policy: a caller registers one with set_policy(), and a refused drop-in is logged by name.",
+    "The bearer is chosen by wire in key_for(), shared with one-cli's own reader.",
+    "A non-HTTP answer (http.client.HTTPException) is an unreachable endpoint, and malformed relay model metadata is absent."
+  ]
+}

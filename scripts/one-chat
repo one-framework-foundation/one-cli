@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+"""`one-chat` - the fast chat entry.
+
+Its own script rather than a subcommand of `one`, for one reason: `onecli.cli`
+imports the agent, the tool registry, MCP and the senses routers before it can
+parse a flag. A chat pays for none of that up front - it loads the loop on the
+turn that first reaches for a tool, and most turns never do. Same repo, same
+backends, same transcript, a shorter path to the first token. `one --chat` is
+the same session for anyone who would rather type one command.
+"""
+
+import os
+import sys
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+from onecli.chat import main  # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(main())

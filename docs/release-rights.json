@@ -1,0 +1,50 @@
+{
+  "license_expression": "LicenseRef-one-license-0.6.3",
+  "license_files": {
+    "LICENSE.md": "45bf78aa97804cbd12b6cba5b3606fa47d33f76c0cf271dcebd6c44320cf2dd4"
+  },
+  "scope_note": "Rights inventory, not a license or proof of ownership. A component is admitted only with status approved and an approval_receipt whose approver equals RELEASE_OWNER in scripts/check-release-rights.py and which names the decision, the covered source_revision and the scope. license_files records the sha256 of the approved license and notice bytes.",
+  "components": [
+    {
+      "name": "one-cli code and documentation",
+      "paths": [
+        "onecli/",
+        "scripts/",
+        "docs/"
+      ],
+      "status": "pending",
+      "approval_receipt": null,
+      "blocker": "Confirm rights holders, contribution grants and exact scope."
+    },
+    {
+      "name": "Subscription policy reader",
+      "paths": [
+        "onecli/_vendor/dropins.py"
+      ],
+      "source_record": "onecli/_vendor/dropins-source.json",
+      "status": "pending",
+      "approval_receipt": null,
+      "blocker": "Confirm origin rights and applicable notices."
+    },
+    {
+      "name": "Terminal glyph engine",
+      "paths": [
+        "onecli/assets/glyph_terminal.mjs"
+      ],
+      "source_record": "onecli/assets/glyph_sources.json",
+      "status": "pending",
+      "approval_receipt": null,
+      "blocker": "Confirm source and asset distribution rights; source hashes do not grant them."
+    },
+    {
+      "name": "Bundled catalog, profile and assets",
+      "paths": [
+        "onecli/assets/",
+        "onecli/serving/models.json"
+      ],
+      "status": "pending",
+      "approval_receipt": null,
+      "blocker": "Complete per-source review; this inventory is not a claim that no additional upstream material exists."
+    }
+  ]
+}

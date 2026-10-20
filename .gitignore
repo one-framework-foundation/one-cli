@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+.scratch/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Locally installed third-party harnesses for the arena - never committed.
+.harnesses/
+scratch/
+logs/
+scratch-out/
+.worktrees/
+.wt/
+*.png
+*.patch
+
+# Run artefacts: scored outputs, xml, logs. Regenerate, never commit.
+artifacts/
+
+# Local aider state - never committed.
+.aider*

@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" role="img" aria-label="one-cli - a terminal coding agent over the raw wire">
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1a1a1a" stroke-width="0.5"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="300" fill="#0a0a0a"/>
+  <rect width="1200" height="300" fill="url(#grid)"/>
+
+  <!-- one logo mark - 3 waveform bars + smart-mode dot (canonical) -->
+  <g transform="translate(64, 96)">
+    <g fill="#8b7f72">
+      <rect x="0"  y="20" width="16" height="40" rx="8"/>
+      <rect x="24" y="0"  width="16" height="64" rx="8"/>
+      <rect x="48" y="20" width="16" height="40" rx="8"/>
+      <circle cx="32" cy="78" r="6"/>
+    </g>
+  </g>
+
+  <!-- Divider -->
+  <line x1="160" y1="92" x2="160" y2="200" stroke="#333" stroke-width="1"/>
+
+  <!-- Wordmark -->
+  <text x="196" y="150"
+        font-family="'SF Pro Display','Inter',-apple-system,sans-serif"
+        font-size="84" font-weight="300" letter-spacing="2">
+    <tspan fill="#ffffff">one</tspan><tspan fill="#5a534b">-</tspan><tspan fill="#8b7f72">cli</tspan>
+  </text>
+
+  <!-- Subtitle -->
+  <text x="200" y="184"
+        font-family="'SF Pro Display','Inter',-apple-system,sans-serif"
+        font-size="15" font-weight="400" letter-spacing="5" fill="#666">
+    TERMINAL CODING AGENT
+  </text>
+
+  <!-- Tagline -->
+  <text x="200" y="216"
+        font-family="'SF Pro Display','Inter',-apple-system,sans-serif"
+        font-size="17" font-weight="300" letter-spacing="1" fill="#888">
+    Our own agent loop, straight over the wire. No vendor CLI in the path.
+  </text>
+
+  <!-- Built on one - top right -->
+  <text x="1136" y="56" text-anchor="end"
+        font-family="'SF Pro Display','Inter',-apple-system,sans-serif"
+        font-size="11" font-weight="400" letter-spacing="3" fill="#555">
+    BUILT ON ONE
+  </text>
+
+  <!-- Pipeline chips - bottom right -->
+  <g font-family="'SF Mono','Roboto Mono',Menlo,monospace" font-size="15" font-weight="500">
+    <g transform="translate(700,250)">
+      <rect width="48" height="28" rx="6" fill="#111" stroke="#2a2a2a"/>
+      <text x="24" y="19" text-anchor="middle" fill="#8b7f72">task</text>
+    </g>
+    <text x="756" y="269" fill="#444">-&gt;</text>
+    <g transform="translate(780,250)">
+      <rect width="48" height="28" rx="6" fill="#111" stroke="#2a2a2a"/>
+      <text x="24" y="19" text-anchor="middle" fill="#8b7f72">wire</text>
+    </g>
+    <text x="836" y="269" fill="#444">-&gt;</text>
+    <g transform="translate(860,250)">
+      <rect width="56" height="28" rx="6" fill="#111" stroke="#2a2a2a"/>
+      <text x="28" y="19" text-anchor="middle" fill="#8b7f72">tools</text>
+    </g>
+    <text x="924" y="269" fill="#444">-&gt;</text>
+    <g transform="translate(948,250)">
+      <rect width="48" height="28" rx="6" fill="#111" stroke="#facc15"/>
+      <text x="24" y="19" text-anchor="middle" fill="#facc15">loop</text>
+    </g>
+    <text x="1004" y="269" fill="#444">-&gt;</text>
+    <g transform="translate(1028,250)">
+      <rect width="48" height="28" rx="6" fill="#111" stroke="#4ade80"/>
+      <text x="24" y="19" text-anchor="middle" fill="#4ade80">done</text>
+    </g>
+  </g>
+</svg>

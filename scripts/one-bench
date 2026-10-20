@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+"""`one-bench` - score every reachable backend on the same agent tasks."""
+
+import os
+import sys
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+from onecli.evals.bench import main  # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(main())

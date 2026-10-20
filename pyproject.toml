@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "one-core-cli"
+version = "0.1.1"
+description = "Terminal coding agent that drives any model over the raw wire, with its own tool loop."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+authors = [{ name = "Jesse Sep" }]
+# The one license has no SPDX id; PEP 639 names a custom license with a
+# LicenseRef-. Must equal license_expression in docs/release-rights.json.
+license = "LicenseRef-one-license-0.6.3"
+license-files = ["LICENSE.md"]
+keywords = ["cli", "coding-agent", "llm", "terminal", "agent", "tool-use"]
+classifiers = [
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+]
+
+[project.optional-dependencies]
+# What the relay actually needs at runtime. The core stays dependency-free:
+# `pip install one-core-cli` is still a CLI with no third-party imports.
+relay = ["fastapi", "uvicorn", "httpx", "jsonschema"]
+# The one declared test dependency set. CI jobs install `.[test]` rather than
+# keeping their own handwritten lists.
+test = ["pytest", "fastapi", "uvicorn", "httpx", "jsonschema"]
+# Pinned so a ruff release with new default rules cannot fail CI on its own.
+lint = ["ruff==0.15.12", "mypy==2.4.0", "types-jsonschema"]
+dev = ["build", "one-core-cli[test,lint]"]
+
+[project.urls]
+Repository = "https://github.com/one-framework-foundation/one-cli"
+Issues = "https://github.com/one-framework-foundation/one-cli/issues"
+
+[project.scripts]
+one = "onecli.cli:main"
+one-chat = "onecli.chat:main"
+one-bench = "onecli.evals.bench:main"
+one-arena = "onecli.evals.arena:main"
+one-parity = "onecli.evals.parity:main"
+one-stress = "onecli.evals.stress:main"
+one-toolprobe = "onecli.evals.toolprobe:main"
+
+[tool.setuptools.packages.find]
+include = ["onecli", "onecli.*"]
+
+[tool.setuptools.package-data]
+"onecli" = ["assets/*.mjs", "assets/*.json"]
+"onecli.serving" = ["models.json"]
+
+[tool.mypy]
+# The whole package type-checks clean; there is no per-module baseline and no
+# `type: ignore` in onecli/.
+files = ["onecli"]
+python_version = "3.10"
+
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+# pyflakes plus the pycodestyle errors ruff enables by default. Line length and
+# formatting are not enforced: the tree was never formatted and a reformat
+# would bury every real change in blame.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Imports test_chat's `chat` fixture; pytest injects it by parameter name, which
+# pyflakes reads as a redefinition.
+"tests/test_mask_loops.py" = ["F811"]

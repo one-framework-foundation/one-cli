@@ -1,0 +1,7 @@
+{
+  "engine": "GlyphJourney terminal projection",
+  "renderer": "ASCII Canvas projection",
+  "inputs": {
+    "onecli/assets/glyph_terminal.mjs": "42896086853ce290d9de8a7dda60b5274b3d62e3281e25a6175adfe19f80b7da"
+  }
+}

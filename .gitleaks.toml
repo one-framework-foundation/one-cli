@@ -1,0 +1,34 @@
+# gitleaks rules for one-cli: the default credential rules plus the address
+# shapes scripts/leak-scan.py also refuses.
+title = "one-cli"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "private-range-ip"
+description = "Private CGNAT address (100.64.0.0/10) outside the 100.64.0.x placeholder range"
+regex = '''\b100\.(?:6[5-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b|\b100\.64\.(?:[1-9]\d{0,2})\.\d{1,3}\b'''
+
+[[rules]]
+id = "personal-home-path"
+description = "Personal home directory path"
+regex = '''/(?:home|Users)/(?:[A-Za-z0-9_.-]*[A-Za-z0-9_-])(?:[/\s"'`)\].,:;]|$)'''
+[[rules.allowlists]]
+regexes = ['''/(?:home|Users)/(?:user|runner|you|me|alice|bob|example)(?:[/\s"'`)\].,:;]|$)''']
+
+[[rules]]
+id = "telegram-chat-id"
+description = "Telegram supergroup/channel id"
+regex = '''(?:^|[^\d.])-100\d{10}\b'''
+
+[[rules]]
+id = "private-dns-domain"
+description = "Private DNS hostname"
+regex = '''\b[a-z0-9-]+\.ts\.net\b'''
+[[rules.allowlists]]
+regexes = ['''\bexample\.ts\.net\b''']
+
+[allowlist]
+description = "scanner sources and the gitleaks config itself"
+paths = ['''^\.gitleaks\.toml$''', '''^scripts/leak-scan\.py$''']

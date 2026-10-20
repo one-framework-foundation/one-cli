@@ -1,0 +1,20 @@
+include CONTRIBUTING.md
+include CHANGELOG.md
+include SECURITY.md
+include docs/reproducible-releases.md
+include scripts/smoke-wheel.py
+include scripts/update-readme.py
+include docs/manual.md
+include docs/getting-started.md
+include docs/permissions.md
+include docs/relay.md
+include docs/mask-policy.md
+exclude conftest.py
+prune tests
+include docs/support-matrix.md
+include scripts/check-release-rights.py
+include docs/release-rights.json
+include docs/configuration.md
+include scripts/update-config-docs.py
+
+include docs/opencode.md
