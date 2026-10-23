@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 import os
 import subprocess
 import time
@@ -216,11 +217,19 @@ class Agent:
                  todos=None,
                  tasks=None,
                  response_gate="off", progress_policy=None, meditate=False,
+                 soft_turn_seconds=None,
                  request_admission=None, request_budget_isolated=False,
                  sandbox_tools=None, progressive_context=False,
                  mask_policy=None, mask_verifier=None, loop_policy=None,
                  mask_name="", mask_preamble="", context_contract=None, turn_feedback=None,
-                 done_check: str = "", trust_project: bool = False):
+                 done_check: str = "", trust_project: bool = False,
+                 session_id: str | None = None):
+        from onecli import execution_evidence
+        self.execution_evidence = execution_evidence.initialize() if session_id else None
+        if self.execution_evidence:
+            self.execution_evidence.session_id = session_id
+        self.session_id = session_id
+        self._save_execution_checkpoint: Callable[..., None] | None = None
         from onecli.masks.policy import MaskPolicy
         # A shell command that must exit 0 before a final reply counts as done.
         # The model's own "done" is a claim; this is the evidence (a run can
@@ -288,6 +297,13 @@ class Agent:
         from onecli import progress_policy as progress
         self.progress_policy = progress.resolve(progress_policy, base=progress.resolve(
             self.loop_policy.get('progress_policy'), base={**progress.DEFAULT, "enabled": False}))
+        if soft_turn_seconds is not None and (
+                isinstance(soft_turn_seconds, bool)
+                or not isinstance(soft_turn_seconds, (int, float))
+                or not math.isfinite(soft_turn_seconds)
+                or soft_turn_seconds <= 0):
+            raise ValueError("soft_turn_seconds must be finite and positive")
+        self.soft_turn_seconds = soft_turn_seconds
         self.meditate = bool(meditate)
         self._meditating = False
         self.response_gate = response_policy.mode(response_gate)
@@ -425,6 +441,22 @@ class Agent:
     @audit_run
     def run(self, prompt: str, messages: list[dict] | None = None,
             attachments: list[media.Attachment] | None = None) -> Result:
+        if messages:
+            recovered = []
+            for index, message in enumerate(messages):
+                recovered.append(message)
+                if message.get('role') != 'assistant' or not message.get('tool_calls'):
+                    continue
+                following = messages[index + 1:]
+                boundary = next((i for i, m in enumerate(following)
+                                 if m.get('role') != 'tool'), len(following))
+                answered = {m.get('tool_call_id') for m in following[:boundary]}
+                for call in message['tool_calls']:
+                    if call['id'] not in answered:
+                        recovered.append({'role': 'tool', 'tool_call_id': call['id'],
+                                          'name': call['function']['name'],
+                                          'content': 'Interrupted before a result was recorded. Outcome unknown; inspect state before retrying.'})
+            messages = recovered
         self.interrupted_messages = list(messages or [])
         self._active_history = self.interrupted_messages
         try:
@@ -482,6 +514,7 @@ class Agent:
             history.append({"role": "user", "content": lookup})
 
         from onecli import progress_policy as progress
+        wall_started = time.monotonic()
         cadence = progress.Cadence(self.progress_policy, time.monotonic())
         # Once per conversation: every REPL turn is a new run() over the same
         # history, and appending it each time stacked one identical copy per
@@ -507,10 +540,43 @@ class Agent:
         self._meditating = False
         meditate_used = False
         empty_streak = 0
+        empty_retry_limit = self.empty_retries
+        if empty_retry_limit is None and self.session_id:
+            empty_retry_limit = 1
         boosted_max_tokens = 0
         recovery_prompt = None
         cutoff_retries = 0
         overflow_retries = 0
+        from onecli import session as session_store
+        if self.session_id:
+            try:
+                saved = session_store.load_records(self.session_id, 'execution_checkpoint')
+            except FileNotFoundError:
+                saved = []
+            if saved and saved[-1].get('status') != 'answered':
+                retry_state = saved[-1].get('retry_state', {})
+                empty_streak = retry_state.get('empty_streak', 0)
+                cutoff_retries = retry_state.get('cutoff_retries', 0)
+                overflow_retries = retry_state.get('overflow_retries', 0)
+
+        def save_execution_checkpoint(pending=(), status='running'):
+            if not self.session_id:
+                return
+            pending_actions = [{'call_id': c.id, 'name': c.name, 'input': c.arguments}
+                               for c in pending]
+            retry_state = {'empty_streak': empty_streak, 'cutoff_retries': cutoff_retries,
+                           'overflow_retries': overflow_retries}
+            session_store.append(self.session_id, {'kind': 'messages', 'messages': history}, durable=True)
+            record = {'kind': 'execution_checkpoint',
+                      'pending_actions': pending_actions, 'retry_state': retry_state,
+                      'status': status}
+            session_store.append(self.session_id, record, durable=True)
+            if self.execution_evidence:
+                self.execution_evidence.emit({
+                    'type': 'executor_checkpoint', 'session_id': self.session_id,
+                    'pending_actions': pending_actions, 'retry_state': retry_state,
+                    'status': status})
+        self._save_execution_checkpoint = save_execution_checkpoint
         # Low-progress checkpoint (loopguard): due after a run of discovery
         # rounds, sent as one request with tools withheld.
         self.loop.discovery_rounds = 0
@@ -563,7 +629,10 @@ class Agent:
             # No extra call or budget increase; single-step tool callers keep
             # their existing contract. A provider ignoring the empty tool
             # list still cannot execute a tool on this step.
-            final_step = self._last_step(index) and (self.max_steps or 0) > 1
+            wall_ceiling_final = (self.soft_turn_seconds is not None
+                                  and time.monotonic() - wall_started >= self.soft_turn_seconds)
+            final_step = ((self._last_step(index) and (self.max_steps or 0) > 1)
+                          or wall_ceiling_final)
             input_ceiling_final = False
             updating = not assessing and not final_step and cadence.due(time.monotonic())
             # Keep the tool declaration stable on the reserved answer step.
@@ -649,7 +718,8 @@ class Agent:
                     "The assessment was invalid; no tools executed. " + response_policy.ASSESS}]
             if final_step and not assessing:
                 request_history = request_history + [{"role": "user", "content": (
-                    "This is the final response step within the current budget. "
+                    ("The soft wall-clock limit was reached. " if wall_ceiling_final else
+                     "This is the final response step within the current budget. ") +
                     "Use the evidence already collected to answer the user's "
                     "request now. Do not call tools. Report useful findings, "
                     "verified artifacts, and what remains incomplete. Do not "
@@ -689,6 +759,7 @@ class Agent:
             # has already ended.
             # Persist only complete exchanges: every assistant tool call in
             # this snapshot has its result, so a resumed provider accepts it.
+            save_execution_checkpoint()
             self.on_event("checkpoint", {"messages": history})
             self.on_event("waiting", {"step": index})
             if self.turn_feedback is not None:
@@ -850,7 +921,10 @@ class Agent:
                     # tools have already done the work, and failing here
                     # discards all of it and reports "returned nothing" for a
                     # task that in fact completed.
-                    if self.empty_retries is None or empty_streak < self.empty_retries:
+                    if wall_ceiling_final:
+                        return self._result(_salvage(steps), steps, history, stopped="budget_time",
+                                            error="soft wall-clock limit reached; final response was empty")
+                    if empty_retry_limit is None or empty_streak < empty_retry_limit:
                         empty_streak += 1
                         if turn.finish_reason in ("max_tokens", "length"):
                             boosted_max_tokens = self._boosted_max_tokens()
@@ -900,6 +974,9 @@ class Agent:
                 # to the limit. Ending the run on it reports unfinished work
                 # as answered.
                 if turn.finish_reason in ("max_tokens", "length"):
+                    if wall_ceiling_final:
+                        return self._result(turn.text, steps, history, stopped="budget_time",
+                                            error="soft wall-clock limit reached; final response was truncated")
                     if cutoff_retries < 2:
                         cutoff_retries += 1
                         boosted_max_tokens = self._boosted_max_tokens()
@@ -916,7 +993,7 @@ class Agent:
                         stopped="truncated",
                         error=(f"turn {index} still hit the output limit after "
                                f"{cutoff_retries} retries; the run did not finish"))
-                if self.meditate and not meditate_used:
+                if self.meditate and not meditate_used and not wall_ceiling_final:
                     meditate_used = True
                     if (self.max_steps is None or self.max_steps - index >= 2) and not self._over_budget():
                         from onecli.meditate import REVIEW
@@ -930,6 +1007,9 @@ class Agent:
                     self._meditating = False
                 failed = self._done_check_failure()
                 if failed is not None:
+                    if wall_ceiling_final:
+                        return self._result(turn.text, steps, history, stopped="budget_time",
+                                            error=f"soft wall-clock limit reached; done-check failed: {failed[-400:]}")
                     if self.done_refusals < DONE_CHECK_RETRIES:
                         self.done_refusals += 1
                         self.on_event("done_check_failed", {
@@ -945,14 +1025,20 @@ class Agent:
                                f"{failed[-400:]}"))
                 refusal = self._stop_refusal()
                 if refusal is not None:
+                    if wall_ceiling_final:
+                        return self._result(turn.text, steps, history, stopped="budget_time",
+                                            error="soft wall-clock limit reached; stop hook found unfinished work")
                     # A Stop hook said the work is not finished. Feed the reason
                     # back as a user turn so the model can act on it - the loop
                     # continuing with no explanation would just repeat itself.
                     history.append({"role": "user", "content": refusal})
                     continue
-                if (not self._last_step(index) and self.turn_feedback is not None
+                if (not wall_ceiling_final and not self._last_step(index) and self.turn_feedback is not None
                         and self.turn_feedback.consume(history, acknowledge=False)):
                     continue
+                if wall_ceiling_final:
+                    return self._result(turn.text, steps, history, stopped="budget_time",
+                                        error="soft wall-clock limit reached; work may be incomplete")
                 if input_ceiling_final:
                     # The ceiling, not the model, ended this run: tools were
                     # withheld and the reply is whatever fit. Reporting it as
@@ -974,17 +1060,21 @@ class Agent:
             if final_step:
                 return self._result(
                     "", steps, history,
-                    stopped="budget_input" if input_ceiling_final else "budget",
+                    stopped=("budget_input" if input_ceiling_final else
+                             "budget_time" if wall_ceiling_final else "budget"),
                     error=("model requested more tools on the final-response step "
                            "reserved by the cumulative input ceiling; no further "
                            "tools executed" if input_ceiling_final else
+                           "model requested more tools after the soft wall-clock limit; "
+                           "no further tools executed" if wall_ceiling_final else
                            "model requested more tools on the reserved "
                            "final-response step; no further tools executed"))
 
             history.append(self._assistant_message(turn))
 
             round_results: list[tuple[str, dict, str]] = []
-            for call in turn.tool_calls:
+            for call_index, call in enumerate(turn.tool_calls):
+                save_execution_checkpoint(turn.tool_calls[call_index:])
                 if self.run_limits and (call.name != 'web_fetch' or
                         call.arguments.get('url') not in self.run_limits['urls']):
                     return self._result('', steps, history, stopped='restricted',
@@ -998,16 +1088,18 @@ class Agent:
                     elif self.sandbox_tools is not None:
                         output = self.sandbox_tools.execute(call.name, call.arguments)
                     else:
-                        output = toolkit.run(call.name,
-                                     self.loop.clamp(call.name, call.arguments),
-                                     self.workspace, spill=self.spill,
-                                     jobs=self.jobs, asker=self.asker,
-                                     spawner=self.spawner, todos=self.todos,
-                                     path_guards=permissions.path_guards(self.guard),
-                                     policy=self._external_policy(),
-                                     trust_project=self.trust_project,
-                                     call_tool=self._code_caller(step),
-                                     room=self._result_room(history))
+                        from onecli.execution_evidence import call_scope
+                        with call_scope(call.id, call.name, self.execution_evidence):
+                            output = toolkit.run(call.name,
+                                         self.loop.clamp(call.name, call.arguments),
+                                         self.workspace, spill=self.spill,
+                                         jobs=self.jobs, asker=self.asker,
+                                         spawner=self.spawner, todos=self.todos,
+                                         path_guards=permissions.path_guards(self.guard),
+                                         policy=self._external_policy(),
+                                         trust_project=self.trust_project,
+                                         call_tool=self._code_caller(step),
+                                         room=self._result_room(history))
                 else:
                     output = f"blocked: {verdict.reason}"
                     step.denials.append((call.name, verdict.reason))
@@ -1047,6 +1139,7 @@ class Agent:
                     "name": call.name,
                     "content": output,
                 })
+                save_execution_checkpoint(turn.tool_calls[call_index + 1:])
                 if self.run_limits and (verdict is not None or
                         'verdict=BLOCK' in output or 'fetch refused' in output or
                         output.startswith(('blocked:', 'error:'))):
@@ -1076,6 +1169,8 @@ class Agent:
 
     def _result(self, text: str, steps: list[Step], history: list[dict],
                 stopped: str = "answered", error: str = "") -> Result:
+        if self._save_execution_checkpoint is not None:
+            self._save_execution_checkpoint(status=stopped)
         if not text.strip() and stopped in ("budget", "budget_input", "budget_usd"):
             text = next((step.turn.text for step in reversed(steps)
                          if step.turn.text.strip()), text)

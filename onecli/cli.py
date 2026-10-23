@@ -136,6 +136,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--progress-seconds", type=float, default=None)
     p.add_argument("--progress-tool-calls", type=int, default=None)
     p.add_argument("--no-progress", action="store_true", help="Disable progress checkpoints.")
+    p.add_argument("--soft-turn-seconds", type=float, default=None,
+                   help="Begin a final answer at the next model-step boundary after this many seconds.")
     p.add_argument("--max-tokens", type=int, default=None,
                    help="Output ceiling per model call. Default: none is sent, "
                         "so the provider allows the model's own maximum.")
@@ -1431,12 +1433,14 @@ def run_once(args, backend, prior: list[dict] | None, sid: str) -> int:
     feedback = TurnFeedback(feedback_fd) if feedback_fd is not None else None
     turn_guard = _guards(args, mode)
     agent = Agent(
+        session_id=sid,
         turn_feedback=feedback,
         **_mask_options(args),
         workspace=os.path.abspath(args.workspace),
         system=_agent_system(args, mode, as_preset),
         progressive_context=_progressive_context(args),
         max_steps=args.max_steps,
+        soft_turn_seconds=args.soft_turn_seconds,
         response_gate=_response_gate(args),
         meditate=getattr(args, "meditate", False),
         progress_policy=_progress_policy(args),
@@ -1825,11 +1829,13 @@ def _interactive_loop(args, backend, prior, sid, client=None):
                 session.append(sid, {"kind": "messages", "messages": data["messages"]})
             itracer(kind, data)
         agent = Agent(
+            session_id=sid,
             **_mask_options(args),
             workspace=os.path.abspath(args.workspace),
             system=_agent_system(args, mode, as_preset),
             progressive_context=_progressive_context(args),
             max_steps=args.max_steps,
+            soft_turn_seconds=args.soft_turn_seconds,
             response_gate=_response_gate(args, interactive=True),
             meditate=getattr(args, "meditate", False),
             progress_policy=_progress_policy(args),
@@ -2070,6 +2076,8 @@ def _first_run():
 
 
 def main(argv: list[str] | None = None) -> int:
+    from onecli.execution_evidence import initialize
+    initialize()
     raw = list(sys.argv[1:] if argv is None else argv)
     budget_isolated = any(x.startswith("--") and "--request-budget-isolated".startswith(x) for x in raw)
     if budget_isolated and raw and raw[0] in serving_cli.VERBS:
