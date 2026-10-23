@@ -35,6 +35,9 @@ ENV: dict[str, tuple[str, str]] = {
     "ONE_CLI_LANE_HEALTH": ("Backends", "Lane health state file shared across processes (default `~/.config/one-cli/lane_health.json`)."),
     "ONE_MODELS_DIR": ("Backends", "Directory for GGUF model weights used by local serving; created if missing, and used instead of the default search locations."),
     "HF_TOKEN": ("Backends", "Hugging Face token sent when the serving catalog reads model metadata."),
+    # Executor integration
+    "ONECLI_EXECUTOR_EVIDENCE_FD": ("Executor integration", "Internal inherited file descriptor for trusted executor receipts; consumed before tool children launch. Set only by the invoking bridge."),
+    "ONECLI_BRIDGE_TURN_ID": ("Executor integration", "Internal bridge turn identity paired with the executor evidence descriptor; consumed before tool children launch."),
     # Terminal and editor
     "EDITOR": ("Terminal", "Editor for `/edit` in the chat; `VISUAL`, then `vi`, when unset."),
     "VISUAL": ("Terminal", "Editor for `/edit` when `EDITOR` is unset."),
