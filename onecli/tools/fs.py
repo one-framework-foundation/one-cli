@@ -7,7 +7,7 @@ import os
 import stat
 from pathlib import Path
 
-from onecli import secureio
+from onecli import secureio, execution_evidence
 
 
 def resolve(workspace: str, path: str) -> Path:
@@ -153,7 +153,7 @@ def write(workspace: str, path: str, content: str) -> str:
         content.encode("utf-8")
     except UnicodeEncodeError as exc:
         return f"error: content is not valid UTF-8 text ({exc.reason}); {p} unchanged"
-    secureio.replace_text(p, content)
+    execution_evidence.replace_text(p, content)
     verb = "overwrote" if existed else "created"
     return f"{verb} {p} ({len(content)} bytes, {content.count(chr(10)) + 1} lines)"
 
@@ -194,7 +194,7 @@ def edit(workspace: str, path: str, old_string: str, new_string: str,
                     f"surrounding context to make it unique, or pass replace_all.")
     # Written beside the file and renamed over it: an edit that fails part way
     # (a file-size limit, a full disk) leaves the original whole.
-    secureio.replace_text(p, text.replace(old_string, new_string),
+    execution_evidence.replace_text(p, text.replace(old_string, new_string),
                           errors="surrogateescape", newline="")
     return f"edited {p} ({count} replacement{'s' if count > 1 else ''})"
 

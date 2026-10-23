@@ -220,7 +220,14 @@ class Agent:
                  sandbox_tools=None, progressive_context=False,
                  mask_policy=None, mask_verifier=None, loop_policy=None,
                  mask_name="", mask_preamble="", context_contract=None, turn_feedback=None,
-                 done_check: str = "", trust_project: bool = False):
+                 done_check: str = "", trust_project: bool = False,
+                 session_id: str | None = None):
+        from onecli import execution_evidence
+        self.execution_evidence = execution_evidence.initialize() if session_id else None
+        if self.execution_evidence:
+            self.execution_evidence.session_id = session_id
+        self.session_id = session_id
+        self._save_execution_checkpoint: Callable[..., None] | None = None
         from onecli.masks.policy import MaskPolicy
         # A shell command that must exit 0 before a final reply counts as done.
         # The model's own "done" is a claim; this is the evidence (a run can
@@ -425,6 +432,22 @@ class Agent:
     @audit_run
     def run(self, prompt: str, messages: list[dict] | None = None,
             attachments: list[media.Attachment] | None = None) -> Result:
+        if messages:
+            recovered = []
+            for index, message in enumerate(messages):
+                recovered.append(message)
+                if message.get('role') != 'assistant' or not message.get('tool_calls'):
+                    continue
+                following = messages[index + 1:]
+                boundary = next((i for i, m in enumerate(following)
+                                 if m.get('role') != 'tool'), len(following))
+                answered = {m.get('tool_call_id') for m in following[:boundary]}
+                for call in message['tool_calls']:
+                    if call['id'] not in answered:
+                        recovered.append({'role': 'tool', 'tool_call_id': call['id'],
+                                          'name': call['function']['name'],
+                                          'content': 'Interrupted before a result was recorded. Outcome unknown; inspect state before retrying.'})
+            messages = recovered
         self.interrupted_messages = list(messages or [])
         self._active_history = self.interrupted_messages
         try:
@@ -507,10 +530,43 @@ class Agent:
         self._meditating = False
         meditate_used = False
         empty_streak = 0
+        empty_retry_limit = self.empty_retries
+        if empty_retry_limit is None and self.session_id:
+            empty_retry_limit = 1
         boosted_max_tokens = 0
         recovery_prompt = None
         cutoff_retries = 0
         overflow_retries = 0
+        from onecli import session as session_store
+        if self.session_id:
+            try:
+                saved = session_store.load_records(self.session_id, 'execution_checkpoint')
+            except FileNotFoundError:
+                saved = []
+            if saved and saved[-1].get('status') != 'answered':
+                retry_state = saved[-1].get('retry_state', {})
+                empty_streak = retry_state.get('empty_streak', 0)
+                cutoff_retries = retry_state.get('cutoff_retries', 0)
+                overflow_retries = retry_state.get('overflow_retries', 0)
+
+        def save_execution_checkpoint(pending=(), status='running'):
+            if not self.session_id:
+                return
+            pending_actions = [{'call_id': c.id, 'name': c.name, 'input': c.arguments}
+                               for c in pending]
+            retry_state = {'empty_streak': empty_streak, 'cutoff_retries': cutoff_retries,
+                           'overflow_retries': overflow_retries}
+            session_store.append(self.session_id, {'kind': 'messages', 'messages': history}, durable=True)
+            record = {'kind': 'execution_checkpoint',
+                      'pending_actions': pending_actions, 'retry_state': retry_state,
+                      'status': status}
+            session_store.append(self.session_id, record, durable=True)
+            if self.execution_evidence:
+                self.execution_evidence.emit({
+                    'type': 'executor_checkpoint', 'session_id': self.session_id,
+                    'pending_actions': pending_actions, 'retry_state': retry_state,
+                    'status': status})
+        self._save_execution_checkpoint = save_execution_checkpoint
         # Low-progress checkpoint (loopguard): due after a run of discovery
         # rounds, sent as one request with tools withheld.
         self.loop.discovery_rounds = 0
@@ -689,6 +745,7 @@ class Agent:
             # has already ended.
             # Persist only complete exchanges: every assistant tool call in
             # this snapshot has its result, so a resumed provider accepts it.
+            save_execution_checkpoint()
             self.on_event("checkpoint", {"messages": history})
             self.on_event("waiting", {"step": index})
             if self.turn_feedback is not None:
@@ -850,7 +907,7 @@ class Agent:
                     # tools have already done the work, and failing here
                     # discards all of it and reports "returned nothing" for a
                     # task that in fact completed.
-                    if self.empty_retries is None or empty_streak < self.empty_retries:
+                    if empty_retry_limit is None or empty_streak < empty_retry_limit:
                         empty_streak += 1
                         if turn.finish_reason in ("max_tokens", "length"):
                             boosted_max_tokens = self._boosted_max_tokens()
@@ -984,7 +1041,8 @@ class Agent:
             history.append(self._assistant_message(turn))
 
             round_results: list[tuple[str, dict, str]] = []
-            for call in turn.tool_calls:
+            for call_index, call in enumerate(turn.tool_calls):
+                save_execution_checkpoint(turn.tool_calls[call_index:])
                 if self.run_limits and (call.name != 'web_fetch' or
                         call.arguments.get('url') not in self.run_limits['urls']):
                     return self._result('', steps, history, stopped='restricted',
@@ -998,16 +1056,18 @@ class Agent:
                     elif self.sandbox_tools is not None:
                         output = self.sandbox_tools.execute(call.name, call.arguments)
                     else:
-                        output = toolkit.run(call.name,
-                                     self.loop.clamp(call.name, call.arguments),
-                                     self.workspace, spill=self.spill,
-                                     jobs=self.jobs, asker=self.asker,
-                                     spawner=self.spawner, todos=self.todos,
-                                     path_guards=permissions.path_guards(self.guard),
-                                     policy=self._external_policy(),
-                                     trust_project=self.trust_project,
-                                     call_tool=self._code_caller(step),
-                                     room=self._result_room(history))
+                        from onecli.execution_evidence import call_scope
+                        with call_scope(call.id, call.name, self.execution_evidence):
+                            output = toolkit.run(call.name,
+                                         self.loop.clamp(call.name, call.arguments),
+                                         self.workspace, spill=self.spill,
+                                         jobs=self.jobs, asker=self.asker,
+                                         spawner=self.spawner, todos=self.todos,
+                                         path_guards=permissions.path_guards(self.guard),
+                                         policy=self._external_policy(),
+                                         trust_project=self.trust_project,
+                                         call_tool=self._code_caller(step),
+                                         room=self._result_room(history))
                 else:
                     output = f"blocked: {verdict.reason}"
                     step.denials.append((call.name, verdict.reason))
@@ -1047,6 +1107,7 @@ class Agent:
                     "name": call.name,
                     "content": output,
                 })
+                save_execution_checkpoint(turn.tool_calls[call_index + 1:])
                 if self.run_limits and (verdict is not None or
                         'verdict=BLOCK' in output or 'fetch refused' in output or
                         output.startswith(('blocked:', 'error:'))):
@@ -1076,6 +1137,8 @@ class Agent:
 
     def _result(self, text: str, steps: list[Step], history: list[dict],
                 stopped: str = "answered", error: str = "") -> Result:
+        if self._save_execution_checkpoint is not None:
+            self._save_execution_checkpoint(status=stopped)
         if not text.strip() and stopped in ("budget", "budget_input", "budget_usd"):
             text = next((step.turn.text for step in reversed(steps)
                          if step.turn.text.strip()), text)

@@ -47,7 +47,7 @@ def path_for(session_id: str) -> Path:
     return SESSION_DIR / f"{session_id}.jsonl"
 
 
-def append(session_id: str, record: dict) -> None:
+def append(session_id: str, record: dict, *, durable: bool = False) -> None:
     path = path_for(session_id)
     with secureio.text_file(path, "a", private=True) as fh:
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
@@ -71,6 +71,11 @@ def append(session_id: str, record: dict) -> None:
             fh.write("\n")
         fh.write(json.dumps({"ts": time.time(), **record}, default=str) + "\n")
         fh.flush()
+        if durable:
+            os.fsync(fh.fileno())
+            if info.st_size == 0:
+                with secureio.directory(path.parent) as parent_fd:
+                    os.fsync(parent_fd)
         if record.get("kind") in ("messages", "messages_delta"):
             previous = prior[1] if prior and record["kind"] == "messages_delta" else []
             messages = previous + record["messages"]

@@ -1431,6 +1431,7 @@ def run_once(args, backend, prior: list[dict] | None, sid: str) -> int:
     feedback = TurnFeedback(feedback_fd) if feedback_fd is not None else None
     turn_guard = _guards(args, mode)
     agent = Agent(
+        session_id=sid,
         turn_feedback=feedback,
         **_mask_options(args),
         workspace=os.path.abspath(args.workspace),
@@ -1825,6 +1826,7 @@ def _interactive_loop(args, backend, prior, sid, client=None):
                 session.append(sid, {"kind": "messages", "messages": data["messages"]})
             itracer(kind, data)
         agent = Agent(
+            session_id=sid,
             **_mask_options(args),
             workspace=os.path.abspath(args.workspace),
             system=_agent_system(args, mode, as_preset),
@@ -2070,6 +2072,8 @@ def _first_run():
 
 
 def main(argv: list[str] | None = None) -> int:
+    from onecli.execution_evidence import initialize
+    initialize()
     raw = list(sys.argv[1:] if argv is None else argv)
     budget_isolated = any(x.startswith("--") and "--request-budget-isolated".startswith(x) for x in raw)
     if budget_isolated and raw and raw[0] in serving_cli.VERBS:
