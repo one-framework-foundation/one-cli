@@ -37,6 +37,7 @@ Every flag `one` accepts and every environment variable one-cli reads. The [manu
 | `--progress-seconds` |  |
 | `--progress-tool-calls` |  |
 | `--no-progress` | Disable progress checkpoints. |
+| `--soft-turn-seconds` | Begin a final answer at the next model-step boundary after this many seconds. |
 | `--max-tokens` | Output ceiling per model call. Default: none is sent, so the provider allows the model's own maximum. |
 | `--temperature` | Sampling temperature. Default: none is sent, so the provider's own default for the model applies. |
 | `--timeout` | Per-request timeout in seconds. |

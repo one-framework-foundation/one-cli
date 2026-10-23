@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 import os
 import subprocess
 import time
@@ -216,6 +217,7 @@ class Agent:
                  todos=None,
                  tasks=None,
                  response_gate="off", progress_policy=None, meditate=False,
+                 soft_turn_seconds=None,
                  request_admission=None, request_budget_isolated=False,
                  sandbox_tools=None, progressive_context=False,
                  mask_policy=None, mask_verifier=None, loop_policy=None,
@@ -295,6 +297,13 @@ class Agent:
         from onecli import progress_policy as progress
         self.progress_policy = progress.resolve(progress_policy, base=progress.resolve(
             self.loop_policy.get('progress_policy'), base={**progress.DEFAULT, "enabled": False}))
+        if soft_turn_seconds is not None and (
+                isinstance(soft_turn_seconds, bool)
+                or not isinstance(soft_turn_seconds, (int, float))
+                or not math.isfinite(soft_turn_seconds)
+                or soft_turn_seconds <= 0):
+            raise ValueError("soft_turn_seconds must be finite and positive")
+        self.soft_turn_seconds = soft_turn_seconds
         self.meditate = bool(meditate)
         self._meditating = False
         self.response_gate = response_policy.mode(response_gate)
@@ -505,6 +514,7 @@ class Agent:
             history.append({"role": "user", "content": lookup})
 
         from onecli import progress_policy as progress
+        wall_started = time.monotonic()
         cadence = progress.Cadence(self.progress_policy, time.monotonic())
         # Once per conversation: every REPL turn is a new run() over the same
         # history, and appending it each time stacked one identical copy per
@@ -619,7 +629,10 @@ class Agent:
             # No extra call or budget increase; single-step tool callers keep
             # their existing contract. A provider ignoring the empty tool
             # list still cannot execute a tool on this step.
-            final_step = self._last_step(index) and (self.max_steps or 0) > 1
+            wall_ceiling_final = (self.soft_turn_seconds is not None
+                                  and time.monotonic() - wall_started >= self.soft_turn_seconds)
+            final_step = ((self._last_step(index) and (self.max_steps or 0) > 1)
+                          or wall_ceiling_final)
             input_ceiling_final = False
             updating = not assessing and not final_step and cadence.due(time.monotonic())
             # Keep the tool declaration stable on the reserved answer step.
@@ -705,7 +718,8 @@ class Agent:
                     "The assessment was invalid; no tools executed. " + response_policy.ASSESS}]
             if final_step and not assessing:
                 request_history = request_history + [{"role": "user", "content": (
-                    "This is the final response step within the current budget. "
+                    ("The soft wall-clock limit was reached. " if wall_ceiling_final else
+                     "This is the final response step within the current budget. ") +
                     "Use the evidence already collected to answer the user's "
                     "request now. Do not call tools. Report useful findings, "
                     "verified artifacts, and what remains incomplete. Do not "
@@ -907,6 +921,9 @@ class Agent:
                     # tools have already done the work, and failing here
                     # discards all of it and reports "returned nothing" for a
                     # task that in fact completed.
+                    if wall_ceiling_final:
+                        return self._result(_salvage(steps), steps, history, stopped="budget_time",
+                                            error="soft wall-clock limit reached; final response was empty")
                     if empty_retry_limit is None or empty_streak < empty_retry_limit:
                         empty_streak += 1
                         if turn.finish_reason in ("max_tokens", "length"):
@@ -957,6 +974,9 @@ class Agent:
                 # to the limit. Ending the run on it reports unfinished work
                 # as answered.
                 if turn.finish_reason in ("max_tokens", "length"):
+                    if wall_ceiling_final:
+                        return self._result(turn.text, steps, history, stopped="budget_time",
+                                            error="soft wall-clock limit reached; final response was truncated")
                     if cutoff_retries < 2:
                         cutoff_retries += 1
                         boosted_max_tokens = self._boosted_max_tokens()
@@ -973,7 +993,7 @@ class Agent:
                         stopped="truncated",
                         error=(f"turn {index} still hit the output limit after "
                                f"{cutoff_retries} retries; the run did not finish"))
-                if self.meditate and not meditate_used:
+                if self.meditate and not meditate_used and not wall_ceiling_final:
                     meditate_used = True
                     if (self.max_steps is None or self.max_steps - index >= 2) and not self._over_budget():
                         from onecli.meditate import REVIEW
@@ -987,6 +1007,9 @@ class Agent:
                     self._meditating = False
                 failed = self._done_check_failure()
                 if failed is not None:
+                    if wall_ceiling_final:
+                        return self._result(turn.text, steps, history, stopped="budget_time",
+                                            error=f"soft wall-clock limit reached; done-check failed: {failed[-400:]}")
                     if self.done_refusals < DONE_CHECK_RETRIES:
                         self.done_refusals += 1
                         self.on_event("done_check_failed", {
@@ -1002,14 +1025,20 @@ class Agent:
                                f"{failed[-400:]}"))
                 refusal = self._stop_refusal()
                 if refusal is not None:
+                    if wall_ceiling_final:
+                        return self._result(turn.text, steps, history, stopped="budget_time",
+                                            error="soft wall-clock limit reached; stop hook found unfinished work")
                     # A Stop hook said the work is not finished. Feed the reason
                     # back as a user turn so the model can act on it - the loop
                     # continuing with no explanation would just repeat itself.
                     history.append({"role": "user", "content": refusal})
                     continue
-                if (not self._last_step(index) and self.turn_feedback is not None
+                if (not wall_ceiling_final and not self._last_step(index) and self.turn_feedback is not None
                         and self.turn_feedback.consume(history, acknowledge=False)):
                     continue
+                if wall_ceiling_final:
+                    return self._result(turn.text, steps, history, stopped="budget_time",
+                                        error="soft wall-clock limit reached; work may be incomplete")
                 if input_ceiling_final:
                     # The ceiling, not the model, ended this run: tools were
                     # withheld and the reply is whatever fit. Reporting it as
@@ -1031,10 +1060,13 @@ class Agent:
             if final_step:
                 return self._result(
                     "", steps, history,
-                    stopped="budget_input" if input_ceiling_final else "budget",
+                    stopped=("budget_input" if input_ceiling_final else
+                             "budget_time" if wall_ceiling_final else "budget"),
                     error=("model requested more tools on the final-response step "
                            "reserved by the cumulative input ceiling; no further "
                            "tools executed" if input_ceiling_final else
+                           "model requested more tools after the soft wall-clock limit; "
+                           "no further tools executed" if wall_ceiling_final else
                            "model requested more tools on the reserved "
                            "final-response step; no further tools executed"))
 

@@ -136,6 +136,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--progress-seconds", type=float, default=None)
     p.add_argument("--progress-tool-calls", type=int, default=None)
     p.add_argument("--no-progress", action="store_true", help="Disable progress checkpoints.")
+    p.add_argument("--soft-turn-seconds", type=float, default=None,
+                   help="Begin a final answer at the next model-step boundary after this many seconds.")
     p.add_argument("--max-tokens", type=int, default=None,
                    help="Output ceiling per model call. Default: none is sent, "
                         "so the provider allows the model's own maximum.")
@@ -1438,6 +1440,7 @@ def run_once(args, backend, prior: list[dict] | None, sid: str) -> int:
         system=_agent_system(args, mode, as_preset),
         progressive_context=_progressive_context(args),
         max_steps=args.max_steps,
+        soft_turn_seconds=args.soft_turn_seconds,
         response_gate=_response_gate(args),
         meditate=getattr(args, "meditate", False),
         progress_policy=_progress_policy(args),
@@ -1832,6 +1835,7 @@ def _interactive_loop(args, backend, prior, sid, client=None):
             system=_agent_system(args, mode, as_preset),
             progressive_context=_progressive_context(args),
             max_steps=args.max_steps,
+            soft_turn_seconds=args.soft_turn_seconds,
             response_gate=_response_gate(args, interactive=True),
             meditate=getattr(args, "meditate", False),
             progress_policy=_progress_policy(args),
